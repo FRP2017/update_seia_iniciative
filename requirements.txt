@@ -1,0 +1,11 @@
+streamlit>=1.41.0
+google-cloud-storage
+google-cloud-bigquery
+db-dtypes
+pandas
+selenium>=4.10.0
+folium
+streamlit-folium
+openpyxl
+beautifulsoup4==4.12.3
+lxml>=5.3.0
