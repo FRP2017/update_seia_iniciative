@@ -1,0 +1,7 @@
+google-cloud-bigquery
+google-cloud-storage
+pandas
+selenium
+openpyxl
+pyarrow
+python-dateutil
