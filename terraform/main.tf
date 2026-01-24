@@ -25,7 +25,6 @@ resource "google_artifact_registry_repository" "repo" {
 }
 
 # 3. BUILD DE LA IMAGEN (Local-exec para subir tu src/)
-
 resource "null_resource" "build_push" {
   # Detectamos cambios en "../src"
   triggers = {
@@ -33,13 +32,10 @@ resource "null_resource" "build_push" {
   }
 
   provisioner "local-exec" {
-    # SOLUCIÓN: Todo el comando en una sola línea para evitar problemas en Windows
     command = "gcloud builds submit ${path.module}/../src --tag ${var.region}-docker.pkg.dev/${var.project_id}/${var.repository_name}/etl-seia:latest --project ${var.project_id}"
   }
   depends_on = [google_artifact_registry_repository.repo]
 }
-
-
 
 # 4. SERVICE ACCOUNT
 resource "google_service_account" "job_sa" {
@@ -52,7 +48,8 @@ resource "google_project_iam_member" "perms" {
     "roles/bigquery.admin",
     "roles/storage.objectAdmin",
     "roles/logging.logWriter",
-    "roles/artifactregistry.reader"
+    "roles/artifactregistry.reader",
+    "roles/run.invoker" # MODIFICACIÓN: Permiso para que el SA pueda ejecutar el Job
   ])
   project = var.project_id
   role    = each.key
@@ -61,13 +58,13 @@ resource "google_project_iam_member" "perms" {
 
 # 5. CLOUD RUN JOB (Aquí está la magia para procesos largos)
 resource "google_cloud_run_v2_job" "seia_job" {
-  name     = var.service_name # Usamos tu variable service_name
+  name     = var.service_name
   location = var.region
 
   template {
     template {
       service_account = google_service_account.job_sa.email
-      timeout = "3600s" # 1 Hora de tiempo máximo
+      timeout = "3600s" 
       
       containers {
         image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.repository_name}/etl-seia:latest"
@@ -75,18 +72,23 @@ resource "google_cloud_run_v2_job" "seia_job" {
         resources {
           limits = {
             cpu    = "2"
-            memory = "2Gi" # Selenium necesita RAM
+            memory = "2Gi"
           }
         }
         
-        # Variables de entorno para Python
+        # MODIFICACIÓN: Fuerza la actualización si el código cambia
+        env {
+          name  = "CODE_VERSION"
+          value = null_resource.build_push.triggers.dir_sha1
+        }
+
         env {
           name = "PROJECT_ID"
           value = var.project_id
         }
         env {
           name = "DATASET_ID"
-          value = "dataset_ambiental" # Ajusta si usas variable
+          value = "dataset_ambiental"
         }
         env {
           name = "BUCKET_NAME"
@@ -102,13 +104,14 @@ resource "google_cloud_run_v2_job" "seia_job" {
 resource "google_cloud_scheduler_job" "cron" {
   name        = "trigger-seia-daily"
   description = "Ejecuta el scraper diariamente"
-  schedule    = "0 6 * * *" # 6 AM
+  schedule    = "0 6 * * *"
   time_zone   = "America/Santiago"
   region      = var.region
 
   http_target {
     http_method = "POST"
-    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${var.service_name}:run"
+    # MODIFICACIÓN: URI actualizada a la API v2 de Cloud Run
+    uri         = "https://${var.region}-run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${var.service_name}:run"
     
     oauth_token {
       service_account_email = google_service_account.job_sa.email
